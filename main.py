@@ -70,18 +70,18 @@ class Database:
             );
 
             CREATE TABLE IF NOT EXISTS productos (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                codigo       TEXT UNIQUE,
-                nombre       TEXT NOT NULL,
-                descripcion  TEXT,
-                categoria_id INTEGER REFERENCES categorias(id) ON DELETE SET NULL,
-                precio_costo REAL DEFAULT 0,
-                precio_venta REAL DEFAULT 0,
-                stock        INTEGER DEFAULT 0,
-                stock_min    INTEGER DEFAULT 5,
-                unidad       TEXT DEFAULT 'unidad',
-                activo       INTEGER DEFAULT 1,
-                creado_en    TEXT DEFAULT (datetime('now','localtime'))
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre          TEXT NOT NULL,
+                descripcion     TEXT,
+                categoria_id    INTEGER REFERENCES categorias(id) ON DELETE SET NULL,
+                precio_costo    REAL DEFAULT 0,
+                precio_estimado REAL DEFAULT 0,
+                precio_venta    REAL DEFAULT 0,
+                stock           INTEGER DEFAULT 0,
+                stock_min       INTEGER DEFAULT 5,
+                tamaño          TEXT DEFAULT '-',
+                activo          INTEGER DEFAULT 1,
+                creado_en       TEXT DEFAULT (datetime('now','localtime'))
             );
 
             CREATE TABLE IF NOT EXISTS ventas (
@@ -111,13 +111,15 @@ class Database:
                 observacion TEXT
             );
         """)
+        # Migraciones
+        migraciones = [
+            "ALTER TABLE productos ADD COLUMN precio_estimado REAL DEFAULT 0",
+            "ALTER TABLE productos ADD COLUMN tamaño TEXT DEFAULT '-'",
+        ]
         try:
             count = self.conn.execute("SELECT COUNT(*) FROM categorias").fetchone()[0]
             if count == 0:
                 self.conn.execute("INSERT INTO categorias (nombre) VALUES ('General')")
-                self.conn.execute("INSERT INTO categorias (nombre) VALUES ('Bebidas')")
-                self.conn.execute("INSERT INTO categorias (nombre) VALUES ('Alimentos')")
-                self.conn.execute("INSERT INTO categorias (nombre) VALUES ('Limpieza')")
                 self.conn.execute("INSERT INTO categorias (nombre) VALUES ('Otros')")
                 self.conn.commit()
         except Exception:
@@ -145,7 +147,7 @@ class Database:
         """
         params = []
         if buscar:
-            q += " AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.descripcion LIKE ?)"
+            q += " AND (p.nombre LIKE ? OR c.nombre LIKE ? OR p.descripcion LIKE ?)"
             b = f"%{buscar}%"
             params += [b, b, b]
         if cat_id:
@@ -205,7 +207,7 @@ class Database:
 
     def get_venta_items(self, vid):
         return self.conn.execute("""
-            SELECT vi.*, p.nombre, p.codigo FROM venta_items vi
+            SELECT vi.*, p.nombre FROM venta_items vi
             JOIN productos p ON vi.producto_id = p.id
             WHERE vi.venta_id=?
         """, (vid,)).fetchall()
@@ -220,7 +222,7 @@ class Database:
 
     def get_ingresos(self, desde=None, hasta=None):
         q = """
-            SELECT i.*, p.nombre AS producto, p.codigo
+            SELECT i.*, p.nombre AS producto
             FROM ingresos i JOIN productos p ON i.producto_id=p.id
             WHERE 1=1
         """
@@ -581,9 +583,9 @@ class ProductosTab(tk.Frame):
         # Tabla
         tf, self.tree = scrollable_tree(
             self,
-            ("codigo", "nombre", "categoria", "descripcion", "stock", "stock_min", "costo", "precio", "unidad"),
-            ("Código", "Nombre", "Categoría", "Descripción", "Stock", "Mín.", "Costo", "Precio venta", "Unidad"),
-            (80, 170, 100, 100, 70, 60, 110, 120, 80)
+            ("nombre", "categoria", "descripcion", "stock", "stock_min", "costo", "precio_estimado", "precio", "tamaño"),
+            ("Nombre", "Categoría", "Descripción", "Stock", "Mín.", "Costo", "Precio Estimado", "Precio venta", "Tamaño"),
+            (140, 80, 100, 40, 40, 90, 90, 90, 50)
         )
         tf.pack(fill="both", expand=True, padx=20, pady=(0,16))
 
@@ -611,10 +613,10 @@ class ProductosTab(tk.Frame):
         for i, p in enumerate(self.db.get_productos(buscar, cat_id, bajo)):
             tag = "bajo" if p["stock"] <= p["stock_min"] else row_tag(i)
             self.tree.insert("", "end", iid=str(p["id"]), values=(
-                p["codigo"] or "", p["nombre"], p["categoria"] or "—", p["descripcion"],
+                p["nombre"], p["categoria"] or "—", p["descripcion"],
                 p["stock"], p["stock_min"],
-                fmt_money(p["precio_costo"]), fmt_money(p["precio_venta"]),
-                p["unidad"]
+                fmt_money(p["precio_costo"]), fmt_money(p["precio_estimado"]), fmt_money(p["precio_venta"]),
+                p["tamaño"]
             ), tags=(tag,))
 
         self.tree.tag_configure("bajo",  background="#3B1A1A", foreground=C["danger"])
@@ -624,7 +626,6 @@ class ProductosTab(tk.Frame):
     def _get_fields(self):
         cats = [c["nombre"] for c in self.db.get_categorias()]
         return [
-            ("Código (opcional)",  "codigo",       "text",  ),
             ("Nombre *",           "nombre",        "text",  ),
             ("Descripción",        "descripcion",   "text_area",),
             ("Categoría",          "categoria_id",  "combo", cats),
@@ -632,7 +633,7 @@ class ProductosTab(tk.Frame):
             ("Precio venta",       "precio_venta",  "float", ),
             ("Stock inicial",      "stock",         "int",   ),
             ("Stock mínimo",       "stock_min",     "int",   ),
-            ("Unidad (ej: kg, lt)","unidad",        "text",  ),
+            ("Tamaño",             "tamaño",        "text",  ),
         ]
 
     def _nuevo(self):
@@ -650,15 +651,15 @@ class ProductosTab(tk.Frame):
                     cat_id = c["id"]; break
             try:
                 self.db.add_producto({
-                    "codigo":       r["codigo"] or None,
                     "nombre":       r["nombre"],
                     "descripcion":  r["descripcion"],
                     "categoria_id": cat_id,
                     "precio_costo": float(r["precio_costo"] or 0),
+                    "precio_estimado": round(float(r["precio_costo"] or 0) * 1.30, 2),
                     "precio_venta": float(r["precio_venta"] or 0),
                     "stock":        int(r["stock"] or 0),
                     "stock_min":    int(r["stock_min"] or 5),
-                    "unidad":       r["unidad"] or "unidad",
+                    "tamaño":       r["tamaño"] or "-",
                 })
                 self.refresh()
                 self.app.dashboard.refresh()
@@ -690,15 +691,15 @@ class ProductosTab(tk.Frame):
                     cat_id = c["id"]; break
             try:
                 self.db.update_producto(pid, {
-                    "codigo":       r["codigo"] or None,
                     "nombre":       r["nombre"],
                     "descripcion":  r["descripcion"],
                     "categoria_id": cat_id,
                     "precio_costo": float(r["precio_costo"] or 0),
+                    "precio_estimado": round(float(r["precio_costo"] or 0) * 1.30, 2),
                     "precio_venta": float(r["precio_venta"] or 0),
                     "stock":        int(r["stock"] or 0),
                     "stock_min":    int(r["stock_min"] or 5),
-                    "unidad":       r["unidad"] or "unidad",
+                    "tamaño":       r["tamaño"] or "-",
                 })
                 self.refresh()
                 self.app.dashboard.refresh()
@@ -815,7 +816,7 @@ class NuevaVentaTab(tk.Frame):
 
         # ── Panel derecho: carrito + totales ──
         right_outer = make_frame(self, bg=C["bg"])
-        right_outer.pack(side="right", fill="both", expand=True, padx=(8,20), pady=12)
+        right_outer.pack(side="right", fill="x", expand=True, padx=(8,20), pady=12)
 
         right_top = make_frame(right_outer, bg=C["bg"])
         right_top.pack(side="top", fill="both", expand=True)
@@ -864,7 +865,7 @@ class NuevaVentaTab(tk.Frame):
             return
         prods = self.db.get_productos(buscar=q)[:12]
         for p in prods:
-            stock_txt = f"[{p['stock']} {p['unidad']}]"
+            stock_txt = f"[{p['stock']}]"
             self.prod_listbox.insert("end", f"{p['nombre']}  {stock_txt}  {fmt_money(p['precio_venta'])}")
             self._productos_encontrados.append(p)
 
@@ -1082,8 +1083,12 @@ class IngresosTab(tk.Frame):
         left.configure(width=400)
         left.pack_propagate(False)
 
-        make_label(left, "Ingreso de Mercadería", font=FONT_HEAD,
-                   bg=C["bg"], fg=C["white"]).pack(anchor="w", pady=(0,10))
+        hdr = make_frame(left, bg=C["bg"])
+        hdr.pack(fill="x", pady=(0,10))
+        make_label(hdr, "Ingreso de Mercadería", font=FONT_HEAD,
+                bg=C["bg"], fg=C["white"]).pack(side="left")
+        make_button(hdr, "➕ Nuevo producto", self._nuevo_producto,
+            color=C["accent2"]).pack(side="right")
 
         fields_frame = make_frame(left, bg=C["surface"])
         fields_frame.pack(fill="x", pady=4)
@@ -1149,6 +1154,44 @@ class IngresosTab(tk.Frame):
             (155, 200, 80, 100, 140, 160)
         )
         hf.pack(fill="both", expand=True)
+
+    def _nuevo_producto(self):
+        cats = [c["nombre"] for c in self.db.get_categorias()]
+        fields = [
+            ("Nombre *",            "nombre",       "text",     ),
+            ("Descripción",         "descripcion",  "text_area",),
+            ("Categoría",           "categoria_id", "combo", cats),
+            ("Precio costo",        "precio_costo", "float",    ),
+            ("Precio venta",        "precio_venta", "float",    ),
+            ("Stock mínimo",        "stock_min",    "int",      ),
+            ("Tamaño",              "tamaño",       "text",     ),
+        ]
+        dlg = FormDialog(self, "Nuevo Producto", fields)
+        if dlg.result:
+            r = dlg.result
+            if not r.get("nombre"):
+                messagebox.showwarning("Error", "El nombre es obligatorio.")
+                return
+            cat_id = None
+            for c in self.db.get_categorias():
+                if c["nombre"] == r.get("categoria_id", ""):
+                    cat_id = c["id"]; break
+            try:
+                self.db.add_producto({
+                    "nombre":       r["nombre"],
+                    "descripcion":  r["descripcion"],
+                    "categoria_id": cat_id,
+                    "precio_costo": float(r["precio_costo"] or 0),
+                    "precio_venta": float(r["precio_venta"] or 0),
+                    "stock":        0,
+                    "stock_min":    int(r["stock_min"] or 5),
+                    "unidad":       r["unidad"] or "unidad",
+                })
+                self.app.productos_tab.refresh()
+                self.app.dashboard.refresh()
+                messagebox.showinfo("✅ Producto creado", f"'{r['nombre']}' agregado. Ahora podés registrar el ingreso.")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
 
     def _buscar_prod(self, *_):
         q = self.ing_prod_var.get()
@@ -1310,7 +1353,7 @@ class ReportesTab(tk.Frame):
         elif self._current_report == "bajo_stock":
             for i, p in enumerate(self.db.get_productos(solo_bajo_stock=True)):
                 self.rep_tree.insert("", "end", values=(
-                    p["codigo"] or "", p["nombre"], p["categoria"] or "—",
+                    p["id"], p["nombre"], p["categoria"] or "—",
                     p["stock"], p["stock_min"]
                 ), tags=(row_tag(i),))
 
@@ -1450,5 +1493,11 @@ class App(tk.Tk):
 #  ENTRY POINT
 # ─────────────────────────────────────────
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    try:
+        app = App()
+        app.mainloop()
+    except Exception as e:
+        import traceback
+        with open("error_log.txt", "w") as f:
+            f.write(traceback.format_exc())
+        input(f"ERROR: {e}\nPresioná Enter para cerrar...")
