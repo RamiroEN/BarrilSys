@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════╗
 ║     SISTEMA BARRIL&BARRICA               ║
-║     Versión 1.0                          ║
+║     Versión 1.1                          ║
 ║     Requiere: Python 3.8+ con tkinter    ║
 ╚══════════════════════════════════════════╝
 
@@ -1127,7 +1127,7 @@ class IngresosTab(tk.Frame):
         self.ing_obs_var = tk.StringVar()
         lbl_entry(fields_frame, "Observación:", self.ing_obs_var, 5)
 
-        make_button(left, "✅ REGISTRAR INGRESO", self._registrar,
+        make_button(left, " ✅ REGISTRAR INGRESO", self._registrar,
                     color=C["success"]).pack(fill="x", pady=12)
 
         # ── Derecha: historial ──────────────
@@ -1185,7 +1185,7 @@ class IngresosTab(tk.Frame):
                     "precio_venta": float(r["precio_venta"] or 0),
                     "stock":        0,
                     "stock_min":    int(r["stock_min"] or 5),
-                    "unidad":       r["unidad"] or "unidad",
+                    "tamaño":       r["tamaño"] or "tamaño",
                 })
                 self.app.productos_tab.refresh()
                 self.app.dashboard.refresh()
@@ -1201,7 +1201,7 @@ class IngresosTab(tk.Frame):
             return
         prods = self.db.get_productos(buscar=q)[:10]
         for p in prods:
-            self.ing_listbox.insert("end", f"{p['nombre']}  [{p['stock']} {p['unidad']}]")
+            self.ing_listbox.insert("end", f"{p['nombre']}  [{p['stock']}] {fmt_money(p['precio_venta'])}") 
             self._ing_prods.append(p)
 
     def _seleccionar_prod(self, _=None):
@@ -1230,6 +1230,10 @@ class IngresosTab(tk.Frame):
         prov = self.ing_prov_var.get()
         obs  = self.ing_obs_var.get()
         self.db.nuevo_ingreso(self._ing_pid, cant, costo, prov, obs)
+        self.db.update_producto(self._ing_pid, {
+            "precio_costo": costo,
+            "precio_estimado": round(costo * 1.30 , 2),
+        })
         messagebox.showinfo("✅ Ingreso registrado", f"Se agregaron {cant} unidades al stock.")
         # Reset
         self.ing_prod_var.set("")
